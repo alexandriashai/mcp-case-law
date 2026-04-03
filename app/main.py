@@ -1,0 +1,60 @@
+"""Case Law MCP Server — FastAPI application."""
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+
+from .services import courtlistener
+
+app = FastAPI(
+    title="Case Law MCP Server",
+    description="Search 9M+ court opinions and federal dockets via CourtListener / RECAP "
+                "for insurance litigation precedent.",
+    version="1.0.0",
+)
+
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "source": "courtlistener", "opinions": "9M+", "courts": "2000+"}
+
+
+@app.get("/")
+def root():
+    return {
+        "name": "Case Law MCP Server",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "mcp": "https://caselaw.wyldfyre.ai/mcp",
+    }
+
+
+@app.get("/opinions/search")
+async def opinion_search(
+    q: str = Query(...),
+    court: str = Query(""),
+    filed_after: str = Query(""),
+    filed_before: str = Query(""),
+    cited_gt: int = Query(0),
+    limit: int = Query(10, ge=1, le=20),
+):
+    return await courtlistener.search_opinions(q, court, filed_after, filed_before, cited_gt, limit)
+
+
+@app.get("/opinions/{cluster_id}")
+async def opinion_detail(cluster_id: int):
+    result = await courtlistener.get_opinion(cluster_id)
+    return result or {"error": "Not found"}
+
+
+@app.get("/dockets/search")
+async def docket_search(
+    q: str = Query(...),
+    court: str = Query(""),
+    limit: int = Query(10, ge=1, le=20),
+):
+    return await courtlistener.search_dockets(q, court, limit)
