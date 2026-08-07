@@ -1,6 +1,8 @@
 """CourtListener / RECAP API client — 9M+ opinions, 2,000+ courts."""
 
 import os
+import re
+
 import httpx
 
 BASE_URL = "https://www.courtlistener.com/api/rest/v4"
@@ -15,6 +17,46 @@ def _headers() -> dict:
         h["Authorization"] = f"Token {TOKEN}"
     return h
 
+
+
+
+# Ordered by fidelity. plain_text first because it needs no tag-stripping; the
+# HTML variants are equivalent in content and differ only in who digitised them.
+_TEXT_FIELDS = (
+    "plain_text",
+    "html_with_citations",
+    "html_lawbox",
+    "xml_harvard",
+    "html_columbia",
+    "html_anon_2020",
+    "html",
+)
+
+
+def _best_text(op_data: dict) -> str:
+    """
+    First NON-EMPTY text field, stripped of markup.
+
+    This used to be `op_data.get("plain_text", op_data.get("html_with_citations", ""))`,
+    which looks like a fallback and is not one: dict.get returns the default only
+    when the KEY IS MISSING, and CourtListener always sends plain_text — as an
+    EMPTY STRING for anything it did not OCR itself. So every scanned or
+    Harvard-digitised opinion returned nothing while its text sat in
+    html_lawbox or xml_harvard.
+
+    Measured 2026-08-06 on six pre-1990 insurance-coverage opinions: 6 of 6 had
+    plain_text == "" with 3.5k-64k characters available in the HTML variants.
+    That is the older case law an appeal is most likely to cite, and it read as
+    "no text available for this case" rather than as a bug.
+    """
+    for field in _TEXT_FIELDS:
+        raw = op_data.get(field) or ""
+        if not raw.strip():
+            continue
+        if "<" in raw:
+            raw = re.sub(r"<[^>]+>", " ", raw)
+        return re.sub(r"\s+", " ", raw).strip()
+    return ""
 
 async def search_opinions(
     query: str,
@@ -71,6 +113,7 @@ async def get_opinion(cluster_id: int) -> dict | None:
 
     # Get the opinion text (first sub-opinion)
     opinion_text = ""
+    full_length = 0
     sub_opinions = data.get("sub_opinions", [])
     if sub_opinions:
         # Fetch the first sub-opinion for text
@@ -79,12 +122,8 @@ async def get_opinion(cluster_id: int) -> dict | None:
             op_resp = await _client.get(op_url if op_url.startswith("http") else f"https://www.courtlistener.com{op_url}", headers=_headers())
             if op_resp.status_code == 200:
                 op_data = op_resp.json()
-                opinion_text = op_data.get("plain_text", op_data.get("html_with_citations", ""))
-                # Strip HTML if we got html_with_citations
-                if "<" in opinion_text:
-                    import re
-                    opinion_text = re.sub(r'<[^>]+>', ' ', opinion_text)
-                    opinion_text = re.sub(r'\s+', ' ', opinion_text).strip()
+                opinion_text = _best_text(op_data)
+                full_length = len(opinion_text)
 
     return {
         "case_name": data.get("case_name", ""),
@@ -96,7 +135,12 @@ async def get_opinion(cluster_id: int) -> dict | None:
         "nature_of_suit": data.get("nature_of_suit", ""),
         "precedential_status": data.get("precedential_status", ""),
         "url": f"https://www.courtlistener.com/opinion/{cluster_id}/",
-        "opinion_text": opinion_text[:10000] if opinion_text else "",
+        # Truncation is REPORTED. A 10k slice of a 106k opinion reads exactly
+        # like a short opinion that ended, and a reader deciding whether a case
+        # helps them would be judging on 9% of it without knowing.
+        "opinion_text": opinion_text[:10000],
+        "opinion_text_truncated": full_length > 10000,
+        "opinion_text_full_length": full_length,
     }
 
 
