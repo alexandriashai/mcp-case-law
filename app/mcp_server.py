@@ -16,6 +16,60 @@ mcp = FastMCP(
 )
 
 
+@mcp.resource("docs://about")
+async def about() -> str:
+    """About this MCP server and its data sources."""
+    return (
+        "Case Law Search MCP Server\n\n"
+        "Search 9M+ court opinions and federal dockets from CourtListener / RECAP.\n\n"
+        "Data Sources:\n"
+        "- CourtListener: 9M+ court opinions across all federal and state courts\n"
+        "- RECAP Archive: Federal court dockets and filings\n\n"
+        "Coverage Areas:\n"
+        "- ERISA benefit denial litigation\n"
+        "- ACA coverage mandate cases\n"
+        "- Mental health parity (MHPAEA) enforcement\n"
+        "- Network adequacy challenges\n"
+        "- Prior authorization disputes\n"
+        "- Insurance bad faith claims\n"
+        "- Coverage denial appeals\n\n"
+        "Tools:\n"
+        "- search_case_law: Keyword search across court opinions\n"
+        "- get_opinion: Full text of a specific opinion by cluster ID\n"
+        "- search_dockets: Search federal court dockets (RECAP)\n"
+        "- insurance_precedent: Find influential, frequently-cited insurance precedent\n"
+    )
+
+
+@mcp.prompt()
+async def erisa_denial_research(diagnosis: str = "major depressive disorder", treatment: str = "residential treatment") -> str:
+    """Research ERISA denial case law for a specific diagnosis and treatment."""
+    return (
+        f"I need to research ERISA denial case law for {diagnosis} involving {treatment}.\n\n"
+        f"1. Use insurance_precedent to find influential appellate cases on "
+        f"'ERISA arbitrary capricious {diagnosis} {treatment} denial'\n"
+        f"2. Search for cases about standard of review with "
+        f"search_case_law query='ERISA de novo arbitrary capricious standard review {treatment}'\n"
+        f"3. Check for recent circuit court decisions with "
+        f"search_case_law query='{diagnosis} {treatment} coverage denial ERISA' filed_after='2020-01-01'\n\n"
+        f"Summarize the key holdings and which standard of review applies."
+    )
+
+
+@mcp.prompt()
+async def bad_faith_precedent(insurer: str = "UnitedHealthcare", state: str = "") -> str:
+    """Find insurance bad faith precedent against a specific insurer."""
+    return (
+        f"Search for insurance bad faith case law against {insurer}.\n\n"
+        f"1. Use search_case_law with query='bad faith {insurer} insurance denial' "
+        f"{'court=' + state if state else ''}\n"
+        f"2. Use insurance_precedent with topic='insurance bad faith punitive damages {insurer}'\n"
+        f"3. Look for class action dockets with search_dockets "
+        f"query='{insurer} class action denial'\n\n"
+        f"Identify patterns in how courts have ruled against this insurer."
+    )
+
+
 @mcp.tool()
 async def search_case_law(
     query: str,
