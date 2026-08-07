@@ -164,12 +164,20 @@ async def search_dockets(
 
     results = []
     for r in data.get("results", []):
+        # RECAP docket results carry docket_absolute_url, NOT absolute_url —
+        # that field is empty here, so this used to build the bare domain
+        # "https://www.courtlistener.com" for every docket. It returned 200,
+        # which is why it read as a working link: it just went to the homepage
+        # instead of the case. A dead link that 404s announces itself; one that
+        # lands on a valid page does not.
+        path = r.get("docket_absolute_url") or r.get("absolute_url") or ""
         results.append({
             "case_name": r.get("caseName", ""),
             "court": r.get("court", ""),
             "date_filed": r.get("dateFiled", ""),
             "docket_number": r.get("docketNumber", ""),
-            "url": f"https://www.courtlistener.com{r.get('absolute_url', '')}",
+            "docket_id": r.get("docket_id", ""),
+            "url": f"https://www.courtlistener.com{path}" if path else "",
             "snippet": r.get("snippet", ""),
         })
 
