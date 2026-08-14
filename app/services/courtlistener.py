@@ -103,8 +103,39 @@ async def search_opinions(
     return {"count": data.get("count", 0), "results": results}
 
 
-async def get_opinion(cluster_id: int) -> dict | None:
-    """Get full opinion details by cluster ID."""
+"""How much opinion text one call returns, and where the window starts.
+
+RAISED FROM 10,000 ON 2026-08-13. Measured across five real ERISA and
+gender-affirming-care opinions, none was shorter than 22,679 characters and the
+longest ran 46,437 — and the tool layer then cut the 10k slice to 8k, so 26% of
+the text reached the caller. An argument built on a quarter of an opinion is
+built on whichever quarter happened to come first.
+
+50,000 characters is roughly 12,500 tokens: one deliberate "read me this case"
+call, comfortably inside any modern context, and enough for the whole of most
+opinions in one request. Nothing in MCP imposed the old number — the protocol
+defines no per-response size limit at all.
+
+HARD_MAX exists so a caller cannot ask for an unbounded slice by accident. It
+is a guard against a runaway argument, not a policy about opinion length.
+"""
+DEFAULT_TEXT_CHARS = 50_000
+HARD_MAX_TEXT_CHARS = 200_000
+
+
+async def get_opinion(
+    cluster_id: int,
+    offset: int = 0,
+    max_chars: int = DEFAULT_TEXT_CHARS,
+) -> dict | None:
+    """Get full opinion details by cluster ID.
+
+    Args:
+        cluster_id: CourtListener cluster ID.
+        offset: Character offset to start the text window at, for paging
+            through an opinion longer than `max_chars`.
+        max_chars: How many characters of opinion text to return.
+    """
     resp = await _client.get(f"{BASE_URL}/clusters/{cluster_id}/", headers=_headers())
     if resp.status_code == 404:
         return None
@@ -125,6 +156,14 @@ async def get_opinion(cluster_id: int) -> dict | None:
                 opinion_text = _best_text(op_data)
                 full_length = len(opinion_text)
 
+    # Clamp before slicing. A negative offset would wrap round to the END of
+    # the opinion in Python and silently return the wrong passage, which is
+    # the failure mode this whole tool exists to avoid.
+    span = max(1, min(int(max_chars), HARD_MAX_TEXT_CHARS))
+    start = max(0, min(int(offset), full_length))
+    window = opinion_text[start:start + span]
+    window_end = start + len(window)
+
     return {
         "case_name": data.get("case_name", ""),
         "case_name_full": data.get("case_name_full", ""),
@@ -138,9 +177,18 @@ async def get_opinion(cluster_id: int) -> dict | None:
         # Truncation is REPORTED. A 10k slice of a 106k opinion reads exactly
         # like a short opinion that ended, and a reader deciding whether a case
         # helps them would be judging on 9% of it without knowing.
-        "opinion_text": opinion_text[:10000],
-        "opinion_text_truncated": full_length > 10000,
+        #
+        # The window is now described completely — start, end, total, and
+        # whether more follows — because "truncated: true" alone does not tell
+        # a caller what to ask for next. These are the fields mcp_server.py
+        # renders; until 2026-08-13 it computed them here and threw them away.
+        "opinion_text": window,
+        "opinion_text_truncated": window_end < full_length or start > 0,
         "opinion_text_full_length": full_length,
+        "opinion_text_offset": start,
+        "opinion_text_end": window_end,
+        "opinion_text_has_more": window_end < full_length,
+        "opinion_text_next_offset": window_end if window_end < full_length else None,
     }
 
 

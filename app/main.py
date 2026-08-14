@@ -46,8 +46,18 @@ async def opinion_search(
 
 
 @app.get("/opinions/{cluster_id}")
-async def opinion_detail(cluster_id: int):
-    result = await courtlistener.get_opinion(cluster_id)
+async def opinion_detail(
+    cluster_id: int,
+    offset: int = Query(0, ge=0),
+    # Same window controls as the MCP tool. The REST side is what
+    # transhealth.guide's build-time /sources page reads, so an endpoint able
+    # to return only the first slice would cap the site's own quoted sources at
+    # the same arbitrary point.
+    max_chars: int = Query(
+        courtlistener.DEFAULT_TEXT_CHARS, ge=1, le=courtlistener.HARD_MAX_TEXT_CHARS
+    ),
+):
+    result = await courtlistener.get_opinion(cluster_id, offset=offset, max_chars=max_chars)
     return result or {"error": "Not found"}
 
 
