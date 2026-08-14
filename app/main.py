@@ -6,7 +6,7 @@ load_dotenv()
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from .services import courtlistener
+from .services import courtlistener, summarize
 
 app = FastAPI(
     title="Case Law MCP Server",
@@ -59,6 +59,43 @@ async def opinion_detail(
 ):
     result = await courtlistener.get_opinion(cluster_id, offset=offset, max_chars=max_chars)
     return result or {"error": "Not found"}
+
+
+@app.get("/opinions/{cluster_id}/summary")
+async def opinion_summary(cluster_id: int):
+    """A machine-written summary of one opinion, from cache when possible.
+
+    Returns 200 with available=false and a reason for every expected failure —
+    no key, budget spent, no opinion text, upstream refused. The caller is a
+    button on a web page, and a 500 there is a stack trace where a sentence
+    belongs.
+
+    Summarises the WHOLE opinion, which only became possible when the 8k cap
+    came off earlier today: a summary of the first 26% would have been a
+    confident account of a quarter of a case.
+    """
+    result = await courtlistener.get_opinion(
+        cluster_id, offset=0, max_chars=summarize.MAX_INPUT_CHARS
+    )
+    if not result:
+        return {"available": False, "reason": "Opinion not found."}
+
+    out = await summarize.summarise(
+        cluster_id,
+        result.get("opinion_text") or "",
+        result.get("opinion_text_full_length") or 0,
+    )
+    out["case_name"] = result.get("case_name_full") or result.get("case_name") or ""
+    out["url"] = result.get("url", "")
+    out["full_length"] = result.get("opinion_text_full_length") or 0
+    return out
+
+
+@app.get("/summaries/budget")
+async def summary_budget():
+    """What today's summary budget looks like. Used by nothing on the site;
+    here so the cap is inspectable without reading the database."""
+    return summarize.budget_state()
 
 
 @app.get("/dockets/search")
