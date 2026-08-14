@@ -91,6 +91,34 @@ async def opinion_summary(cluster_id: int):
     return out
 
 
+@app.get("/dockets/{docket_id}/summary")
+async def docket_summary(docket_id: int):
+    """A machine-written summary of where an active lawsuit stands.
+
+    Built from the filing history, not from opinion text — a docket has none,
+    and its search snippet is empty too. So this answers a different question
+    from the opinion summary: not "what did the court hold" but "where has this
+    got to", which is what the reader on the active-lawsuits tab is asking.
+    """
+    d = await courtlistener.get_docket(docket_id)
+    if not d:
+        return {"available": False, "reason": "Docket not found."}
+
+    header = " · ".join(
+        x for x in [d["case_name"], d["court"], f"filed {d['date_filed']}" if d["date_filed"] else "",
+                    d["docket_number"], d["nature_of_suit"]] if x
+    )
+    body = "\n".join(d["entries"])
+    text = f"{header}\n\nDocket entries, newest first:\n{body}" if body else ""
+
+    out = await summarize.summarise(docket_id, text, len(text), kind="docket")
+    out["case_name"] = d["case_name"]
+    out["url"] = d["url"]
+    out["full_length"] = len(text)
+    out["entry_count"] = d["entry_count"]
+    return out
+
+
 @app.get("/summaries/budget")
 async def summary_budget():
     """What today's summary budget looks like. Used by nothing on the site;

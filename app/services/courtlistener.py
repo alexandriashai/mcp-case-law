@@ -242,3 +242,61 @@ INSURANCE_COURTS = {
     "ca3": "ca3",  # 3rd Circuit (ERISA)
     "ca7": "ca7",  # 7th Circuit
 }
+
+
+# How many docket entries to read for a posture summary. Newest first, because
+# "where does this case stand now" is answered by the end of the history and
+# not the beginning — L.W. v. Skrmetti has 264 entries and the one that matters
+# is the voluntary dismissal at the top.
+DOCKET_ENTRY_LIMIT = 40
+
+
+async def get_docket(docket_id: int) -> dict | None:
+    """Docket metadata plus its most recent entries, for a posture summary.
+
+    A docket carries no opinion text — the field is empty and the search
+    snippet is empty too — so the filing history is the only thing there is to
+    summarise. Returns None only when the docket itself is missing; an empty
+    entry list is a real answer and is reported as such.
+    """
+    resp = await _client.get(f"{BASE_URL}/dockets/{docket_id}/", headers=_headers())
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    d = resp.json()
+
+    entries: list[str] = []
+    try:
+        er = await _client.get(
+            f"{BASE_URL}/docket-entries/",
+            params={
+                "docket": docket_id,
+                "page_size": DOCKET_ENTRY_LIMIT,
+                "order_by": "-date_filed",
+            },
+            headers=_headers(),
+        )
+        if er.status_code == 200:
+            for e in er.json().get("results", []):
+                desc = (e.get("description") or "").strip()
+                if not desc:
+                    continue
+                num = e.get("entry_number")
+                entries.append(f"[{e.get('date_filed') or '?'}] #{num if num else '-'} {desc}")
+    except Exception:
+        # An entry fetch that fails leaves the caller with metadata and no
+        # history, which the summariser reports honestly. Better than a 500 on
+        # a page where this is one button among several.
+        pass
+
+    path = d.get("absolute_url") or ""
+    return {
+        "case_name": d.get("case_name") or d.get("case_name_full") or "",
+        "court": d.get("court_id") or "",
+        "date_filed": d.get("date_filed") or "",
+        "docket_number": d.get("docket_number") or "",
+        "nature_of_suit": d.get("nature_of_suit") or "",
+        "url": f"https://www.courtlistener.com{path}" if path else "",
+        "entries": entries,
+        "entry_count": len(entries),
+    }
